@@ -1,19 +1,23 @@
 package com.grigor.disco;
 
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.SystemClock;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
+import android.text.InputType;
 import android.view.View;
+import android.widget.EditText;
 
 import java.util.ArrayList;
 import java.util.Random;
 
-/** Full-screen light show driven by AudioEngine. Tap = next mode, long press = flashlight strobe. */
+/** Full-screen light show driven by AudioEngine. Tap = next mode, double tap = edit sign, hold = flashlight strobe. */
 class DiscoView extends View {
-    private static final String[] MODES = {"PARTY", "PULSE", "STROBE", "RINGS", "BARS"};
+    private static final String[] MODES = {"PARTY", "PULSE", "STROBE", "RINGS", "BARS", "SIGN"};
 
     private final MainActivity activity;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -37,6 +41,13 @@ class DiscoView extends View {
     private long flashUntil;
     private long labelUntil;
     private String label = "";
+    private final Paint signPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final SharedPreferences prefs;
+    private String sign;
+    private float signX = Float.NaN;
+    private final long[] beatTimes = new long[9];
+    private int beatIndex;
+    private int bpm;
     private final ArrayList<float[]> rings = new ArrayList<>(); // x, y, radius, alpha, hue
 
     DiscoView(MainActivity activity) {
@@ -45,7 +56,11 @@ class DiscoView extends View {
         text.setColor(Color.WHITE);
         text.setTextAlign(Paint.Align.CENTER);
         text.setFakeBoldText(true);
-        showLabel("TAP: MODE   HOLD: FLASHLIGHT");
+        signPaint.setFakeBoldText(true);
+        signPaint.setTextAlign(Paint.Align.LEFT);
+        prefs = activity.getSharedPreferences("disco", 0);
+        sign = prefs.getString("sign", "DISCO TIME");
+        showLabel("TAP: MODE   DOUBLE TAP: SIGN   HOLD: FLASHLIGHT");
         gestures = new GestureDetector(activity, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDown(MotionEvent e) {
@@ -53,9 +68,15 @@ class DiscoView extends View {
             }
 
             @Override
-            public boolean onSingleTapUp(MotionEvent e) {
+            public boolean onSingleTapConfirmed(MotionEvent e) {
                 mode = (mode + 1) % MODES.length;
                 showLabel(MODES[mode]);
+                return true;
+            }
+
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                editSign();
                 return true;
             }
 
@@ -90,6 +111,46 @@ class DiscoView extends View {
         if (beat) beatCount++;
     }
 
+    private void editSign() {
+        EditText input = new EditText(activity);
+        input.setText(sign);
+        input.setSelectAllOnFocus(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+                .setTitle("Sign message")
+                .setView(input)
+                .setPositiveButton("Show", (d, w) -> {
+                    String t = input.getText().toString().trim();
+                    sign = t.isEmpty() ? "DISCO TIME" : t;
+                    prefs.edit().putString("sign", sign).apply();
+                    signX = Float.NaN;
+                    mode = MODES.length - 1;
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void recordBeat(long now) {
+        beatTimes[beatIndex % beatTimes.length] = now;
+        beatIndex++;
+        if (beatIndex < 5) return;
+        int n = Math.min(beatIndex, beatTimes.length);
+        long[] gaps = new long[n - 1];
+        int g = 0;
+        for (int i = 1; i < n; i++) {
+            long a = beatTimes[(beatIndex - i) % beatTimes.length];
+            long b = beatTimes[(beatIndex - i - 1) % beatTimes.length];
+            gaps[g++] = a - b;
+        }
+        java.util.Arrays.sort(gaps);
+        long median = gaps[gaps.length / 2];
+        if (median <= 0) return;
+        float v = 60000f / median;
+        while (v < 70) v *= 2;
+        while (v > 190) v /= 2;
+        bpm = Math.round(v);
+    }
+
     private void showLabel(String s) {
         label = s;
         labelUntil = SystemClock.uptimeMillis() + 1600;
@@ -122,6 +183,7 @@ class DiscoView extends View {
         if (beat) {
             hue += 40 + rnd.nextInt(80);
             flashUntil = now + 70;
+            recordBeat(now);
             if (torchStrobe) activity.flashTorch();
             if (mode == 0 || mode == 3) {
                 int n = mode == 3 ? 2 : 1;
@@ -147,12 +209,24 @@ class DiscoView extends View {
                 c.drawColor(Color.BLACK);
                 drawBars(c, w, h);
                 break;
+            case 5: // SIGN
+                c.drawColor(color(hue + 180, 1f, 0.04f + shownLevel * 0.12f));
+                drawSign(c, w, h, now);
+                break;
             default: // PARTY
                 c.drawColor(color(hue + 180, 1f, 0.05f + shownLevel * 0.35f));
                 drawBars(c, w, h);
                 drawRings(c, w, h);
                 if (now < flashUntil) c.drawColor(Color.argb(90, 255, 255, 255));
                 break;
+        }
+
+        if (bpm > 0 && beatIndex > 0 && now - beatTimes[(beatIndex - 1) % beatTimes.length] < 3000) {
+            text.setTextSize(Math.min(w, h) / 22f);
+            text.setAlpha(170);
+            text.setTextAlign(Paint.Align.RIGHT);
+            c.drawText(bpm + " BPM", w - w * 0.04f, h * 0.06f, text);
+            text.setTextAlign(Paint.Align.CENTER);
         }
 
         String m = message;
@@ -164,6 +238,21 @@ class DiscoView extends View {
         }
 
         postInvalidateOnAnimation();
+    }
+
+    private void drawSign(Canvas c, int w, int h, long now) {
+        float size = Math.min(h * 0.55f, w * 0.75f);
+        if (now < flashUntil) size *= 1.12f;
+        signPaint.setTextSize(size);
+        float tw = signPaint.measureText(sign);
+        if (Float.isNaN(signX)) signX = w;
+        signX -= w * 0.009f * (1f + shownLevel * 1.5f);
+        if (signX < -tw) signX = w;
+        signPaint.setColor(color(hue, now < flashUntil ? 0.2f : 1f, 1f));
+        signPaint.setShadowLayer(size * 0.08f, 0, 0, color(hue + 60, 1f, 1f));
+        Paint.FontMetrics fm = signPaint.getFontMetrics();
+        float y = h / 2f - (fm.ascent + fm.descent) / 2f;
+        c.drawText(sign, signX, y, signPaint);
     }
 
     private void drawBars(Canvas c, int w, int h) {
