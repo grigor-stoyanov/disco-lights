@@ -2,6 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
+// GitHub's build number becomes the app version, so every push is a newer version.
+def buildNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+
 android {
     namespace 'com.grigor.disco'
     compileSdk 34
@@ -10,8 +13,25 @@ android {
         applicationId 'com.grigor.disco'
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        versionCode buildNumber
+        versionName "1.${buildNumber}"
+    }
+
+    // One permanent key, so new builds install as updates over old ones.
+    signingConfigs {
+        disco {
+            storeFile file('disco.jks')
+            storePassword 'swdhP4TiMFFLqdcx1fJ4EI'
+            keyAlias 'disco'
+            keyPassword 'swdhP4TiMFFLqdcx1fJ4EI'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.disco
+        }
     }
 
     compileOptions {

@@ -16,6 +16,7 @@ public class MainActivity extends Activity {
     private static final int REQ_MIC = 1;
 
     private DiscoView view;
+    private Updater updater;
     private AudioEngine audio;
     private CameraManager cameraManager;
     private String torchId;
@@ -29,12 +30,14 @@ public class MainActivity extends Activity {
         view = new DiscoView(this);
         setContentView(view);
         findTorch();
+        updater = new Updater(this);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         hideSystemBars();
+        updater.onResume();
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startAudio();
         } else {
