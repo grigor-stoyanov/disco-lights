@@ -27,10 +27,10 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        view = new DiscoView(this);
+        updater = new Updater(this);
+        view = new DiscoView(this, updater.versionName());
         setContentView(view);
         findTorch();
-        updater = new Updater(this);
     }
 
     @Override

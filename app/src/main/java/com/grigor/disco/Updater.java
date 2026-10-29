@@ -24,7 +24,8 @@ class Updater {
             "https://github.com/grigor-stoyanov/disco-lights/releases/download/latest/";
 
     private final MainActivity activity;
-    private boolean checked;
+    private long lastCheck;
+    private int askedFor;
     private boolean waitingForPermission;
     private boolean downloading;
 
@@ -39,14 +40,16 @@ class Updater {
             download();
             return;
         }
-        if (checked) return;
-        checked = true;
+        // Check every time the app comes to the front, at most once a minute.
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (lastCheck != 0 && now - lastCheck < 60_000) return;
+        lastCheck = now;
         new Thread(() -> {
             try {
                 JSONObject o = new JSONObject(new String(fetch(BASE + "version.json"), "UTF-8"));
                 int latest = o.getInt("versionCode");
                 String notes = o.optString("notes", "");
-                if (latest > currentVersion()) {
+                if (latest > currentVersion() && latest != askedFor) {
                     activity.runOnUiThread(() -> ask(latest, notes));
                 }
             } catch (Exception ignored) {
@@ -56,7 +59,8 @@ class Updater {
     }
 
     private void ask(int latest, String notes) {
-        if (activity.isFinishing()) return;
+        if (activity.isFinishing() || latest == askedFor) return;
+        askedFor = latest;
         String msg = "Version 1." + latest + " is ready (you have 1." + currentVersion() + ").";
         if (!notes.isEmpty()) msg += "\n\nWhat's new: " + notes;
         new AlertDialog.Builder(activity, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
@@ -113,6 +117,10 @@ class Updater {
         }, "disco-update-download").start();
     }
 
+    String versionName() {
+        return "1." + currentVersion();
+    }
+
     @SuppressWarnings("deprecation")
     private int currentVersion() {
         try {
@@ -130,6 +138,7 @@ class Updater {
         c.setReadTimeout(30000);
         c.setRequestProperty("User-Agent", "DiscoLights");
         c.setUseCaches(false);
+        c.setRequestProperty("Cache-Control", "no-cache");
         try (InputStream in = c.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buf = new byte[16384];
             int n;

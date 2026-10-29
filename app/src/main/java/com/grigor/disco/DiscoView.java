@@ -50,7 +50,7 @@ class DiscoView extends View {
     private int bpm;
     private final ArrayList<float[]> rings = new ArrayList<>(); // x, y, radius, alpha, hue
 
-    DiscoView(MainActivity activity) {
+    DiscoView(MainActivity activity, String version) {
         super(activity);
         this.activity = activity;
         text.setColor(Color.WHITE);
@@ -60,7 +60,7 @@ class DiscoView extends View {
         signPaint.setTextAlign(Paint.Align.LEFT);
         prefs = activity.getSharedPreferences("disco", 0);
         sign = prefs.getString("sign", "DISCO TIME");
-        showLabel("TAP: MODE   DOUBLE TAP: SIGN   HOLD: FLASHLIGHT");
+        showLabel("v" + version + "\nTAP: MODE   DOUBLE TAP: SIGN   HOLD: FLASHLIGHT");
         gestures = new GestureDetector(activity, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDown(MotionEvent e) {
@@ -153,7 +153,7 @@ class DiscoView extends View {
 
     private void showLabel(String s) {
         label = s;
-        labelUntil = SystemClock.uptimeMillis() + 1600;
+        labelUntil = SystemClock.uptimeMillis() + (s.startsWith("v") ? 3500 : 1600);
     }
 
     private int color(float h, float s, float v) {
