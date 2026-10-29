@@ -17,7 +17,8 @@ import java.util.Random;
 
 /** Full-screen light show driven by AudioEngine. Tap = next mode, double tap = edit sign, hold = flashlight strobe. */
 class DiscoView extends View {
-    private static final String[] MODES = {"PARTY", "PULSE", "STROBE", "RINGS", "BARS", "SIGN"};
+    private static final String[] MODES = {"PARTY", "PULSE", "STROBE", "RINGS", "BARS", "SIGN", "RHYTHM GAME"};
+    private static final int SIGN = 5, GAME = 6;
 
     private final MainActivity activity;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -49,6 +50,7 @@ class DiscoView extends View {
     private int beatIndex;
     private int bpm;
     private final ArrayList<float[]> rings = new ArrayList<>(); // x, y, radius, alpha, hue
+    private final RhythmGame game;
 
     DiscoView(MainActivity activity, String version) {
         super(activity);
@@ -60,6 +62,7 @@ class DiscoView extends View {
         signPaint.setTextAlign(Paint.Align.LEFT);
         prefs = activity.getSharedPreferences("disco", 0);
         sign = prefs.getString("sign", "DISCO TIME");
+        game = new RhythmGame(prefs);
         showLabel("v" + version + "\nTAP: MODE   DOUBLE TAP: SIGN   HOLD: FLASHLIGHT");
         gestures = new GestureDetector(activity, new GestureDetector.SimpleOnGestureListener() {
             @Override
@@ -69,19 +72,27 @@ class DiscoView extends View {
 
             @Override
             public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (mode == GAME) return true;
                 mode = (mode + 1) % MODES.length;
-                showLabel(MODES[mode]);
+                if (mode == GAME) game.reset();
+                showLabel(mode == GAME ? "RHYTHM GAME\nTAP THE CIRCLES ON THE BEAT" : MODES[mode]);
                 return true;
             }
 
             @Override
             public boolean onDoubleTap(MotionEvent e) {
+                if (mode == GAME) return true;
                 editSign();
                 return true;
             }
 
             @Override
             public void onLongPress(MotionEvent e) {
+                if (mode == GAME) {
+                    mode = 0;
+                    showLabel(MODES[0]);
+                    return;
+                }
                 if (!activity.hasTorch()) {
                     showLabel("NO FLASHLIGHT");
                     return;
@@ -95,6 +106,13 @@ class DiscoView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
+        if (mode == GAME) {
+            int a = e.getActionMasked();
+            if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_POINTER_DOWN) {
+                int i = e.getActionIndex();
+                game.onTap(e.getX(i), e.getY(i), SystemClock.uptimeMillis());
+            }
+        }
         return gestures.onTouchEvent(e) || super.onTouchEvent(e);
     }
 
@@ -124,7 +142,7 @@ class DiscoView extends View {
                     sign = t.isEmpty() ? "DISCO TIME" : t;
                     prefs.edit().putString("sign", sign).apply();
                     signX = Float.NaN;
-                    mode = MODES.length - 1;
+                    mode = SIGN;
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -184,6 +202,7 @@ class DiscoView extends View {
             hue += 40 + rnd.nextInt(80);
             flashUntil = now + 70;
             recordBeat(now);
+            if (mode == GAME) game.onBeat(now, bpm > 0 ? 60000L / bpm : 0);
             if (torchStrobe) activity.flashTorch();
             if (mode == 0 || mode == 3) {
                 int n = mode == 3 ? 2 : 1;
@@ -209,7 +228,11 @@ class DiscoView extends View {
                 c.drawColor(Color.BLACK);
                 drawBars(c, w, h);
                 break;
-            case 5: // SIGN
+            case GAME:
+                c.drawColor(color(hue + 200, 0.9f, 0.05f + shownLevel * 0.15f));
+                game.draw(c, w, h, now, shownLevel);
+                break;
+            case SIGN:
                 c.drawColor(color(hue + 180, 1f, 0.04f + shownLevel * 0.12f));
                 drawSign(c, w, h, now);
                 break;
