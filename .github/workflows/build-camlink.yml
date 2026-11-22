@@ -1,0 +1,44 @@
+name: Build Camera Link APK
+
+on:
+  push:
+    branches: [claude/phone-video-controller-apk-fis1q9]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build signed APK
+        run: gradle :remotecam:assembleRelease --no-daemon
+
+      - name: Prepare release file
+        run: cp remotecam/build/outputs/apk/release/remotecam-release.apk CameraLink.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CameraLink
+          path: CameraLink.apk
+
+      - name: Publish download link
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: camlink-latest
+          name: Camera Link (latest build)
+          prerelease: true
+          overwrite_files: true
+          files: CameraLink.apk
