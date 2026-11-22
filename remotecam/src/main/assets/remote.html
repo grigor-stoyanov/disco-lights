@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Camera Remote</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101018; color: #fff;
+    font-family: -apple-system, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+  #status { font-size: 20px; font-weight: 600; text-align: center; padding: 0 24px; }
+  #timer { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #btn { width: 220px; height: 220px; border-radius: 50%; border: 0; color: #fff;
+    font-size: 30px; font-weight: 700; background: #2e7d32; -webkit-tap-highlight-color: transparent; }
+  #btn.rec { background: #c62828; }
+  #btn:disabled { opacity: .5; }
+  #note { font-size: 14px; color: #b0b0c0; text-align: center; padding: 0 24px; min-height: 40px; }
+</style>
+</head>
+<body>
+  <div id="status">Connecting…</div>
+  <div id="timer">00:00</div>
+  <button id="btn" disabled>START</button>
+  <div id="note"></div>
+<script>
+  var key = new URLSearchParams(location.search).get('k') || '';
+  var recording = false, since = 0, known = false;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function call(path) {
+    return fetch(path + '?k=' + encodeURIComponent(key) + '&t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); });
+  }
+
+  function render() {
+    $('btn').className = recording ? 'rec' : '';
+    $('btn').textContent = recording ? 'STOP' : 'START';
+    $('status').textContent = recording ? '● Recording' : 'Ready';
+  }
+
+  function poll() {
+    call('/state').then(function (t) {
+      var lines = t.split('\n');
+      var rec = lines[0] === 'RECORDING';
+      if (rec && !recording) since = Date.now();
+      recording = rec; known = true;
+      $('btn').disabled = false;
+      $('note').textContent = lines[1] || '';
+      render();
+    }).catch(function () {
+      known = false;
+      $('btn').disabled = true;
+      $('status').textContent = 'Cannot reach the camera phone (wrong link or PIN?)';
+    });
+  }
+
+  $('btn').addEventListener('click', function () {
+    if (!known) return;
+    $('btn').disabled = true;
+    call(recording ? '/stop' : '/start').then(function () { setTimeout(poll, 500); }).catch(poll);
+  });
+
+  setInterval(function () {
+    if (!recording) { $('timer').textContent = '00:00'; return; }
+    var s = Math.floor((Date.now() - since) / 1000);
+    $('timer').textContent = ('0' + Math.floor(s / 60)).slice(-2) + ':' + ('0' + (s % 60)).slice(-2);
+  }, 250);
+
+  setInterval(poll, 1000);
+  poll();
+</script>
+</body>
+</html>

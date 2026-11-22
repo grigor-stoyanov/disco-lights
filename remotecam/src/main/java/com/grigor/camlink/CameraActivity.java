@@ -69,6 +69,7 @@ import java.util.concurrent.Executors;
 public class CameraActivity extends Activity {
 
     static final int PORT = 8765;
+    static final int HTTP_PORT = 8080;
     static final String SERVICE_TYPE = "_camlink._tcp.";
     private static final int REQ_PERMS = 1;
 
@@ -96,6 +97,9 @@ public class CameraActivity extends Activity {
     private Socket client;
     private PrintWriter clientOut;
     private volatile boolean serving;
+    private ServerSocket httpServer;
+    private volatile String lastMsg = "";
+    private final String pin = String.format(Locale.US, "%04d", new java.util.Random().nextInt(10000));
     private NsdManager nsd;
     private NsdManager.RegistrationListener regListener;
 
@@ -455,6 +459,7 @@ public class CameraActivity extends Activity {
                 server.setReuseAddress(true);
                 server.bind(new InetSocketAddress(PORT));
                 registerNsd();
+                startHttp();
                 showIdleStatus();
                 while (serving) {
                     final Socket s = server.accept();
@@ -471,6 +476,87 @@ public class CameraActivity extends Activity {
                 if (serving) setStatus("Network error: " + e.getMessage());
             }
         }, "server").start();
+    }
+
+    // ---- tiny web server so an iPhone (or any browser) can be the remote ----
+
+    private void startHttp() {
+        try {
+            httpServer = new ServerSocket();
+            httpServer.setReuseAddress(true);
+            httpServer.bind(new InetSocketAddress(HTTP_PORT));
+        } catch (IOException e) {
+            return; // the Android remote still works
+        }
+        final ServerSocket hs = httpServer;
+        new Thread(() -> {
+            try {
+                while (serving) {
+                    final Socket s = hs.accept();
+                    new Thread(() -> handleHttp(s), "http").start();
+                }
+            } catch (IOException ignored) { }
+        }, "http-server").start();
+    }
+
+    private void handleHttp(Socket s) {
+        try (Socket sock = s) {
+            sock.setSoTimeout(5000);
+            BufferedReader r = new BufferedReader(new InputStreamReader(sock.getInputStream()));
+            String req = r.readLine();
+            if (req == null) return;
+            String h;
+            while ((h = r.readLine()) != null && !h.isEmpty()) { /* skip headers */ }
+            String[] parts = req.split(" ");
+            String target = parts.length > 1 ? parts[1] : "/";
+            String path = target, query = "";
+            int q = target.indexOf('?');
+            if (q >= 0) { path = target.substring(0, q); query = target.substring(q + 1); }
+            boolean authed = ("&" + query + "&").contains("&k=" + pin + "&");
+
+            int code = 200;
+            String type = "text/plain; charset=utf-8";
+            byte[] body;
+            if (path.equals("/")) {
+                type = "text/html; charset=utf-8";
+                body = readAsset("remote.html");
+            } else if (!authed) {
+                code = 403;
+                body = "Wrong or missing PIN".getBytes("UTF-8");
+            } else if (path.equals("/start")) {
+                Handler c = cam;
+                if (c != null) c.post(this::startRecording);
+                body = "ok".getBytes("UTF-8");
+            } else if (path.equals("/stop")) {
+                Handler c = cam;
+                if (c != null) c.post(this::stopRecording);
+                body = "ok".getBytes("UTF-8");
+            } else if (path.equals("/state")) {
+                body = ((recording ? "RECORDING" : "IDLE") + "\n" + lastMsg).getBytes("UTF-8");
+            } else {
+                code = 404;
+                body = "Not found".getBytes("UTF-8");
+            }
+            String head = "HTTP/1.1 " + code + (code == 200 ? " OK" : " Error") + "\r\n"
+                    + "Content-Type: " + type + "\r\n"
+                    + "Content-Length: " + body.length + "\r\n"
+                    + "Cache-Control: no-store\r\n"
+                    + "Connection: close\r\n\r\n";
+            OutputStream o = sock.getOutputStream();
+            o.write(head.getBytes("UTF-8"));
+            o.write(body);
+            o.flush();
+        } catch (IOException ignored) { }
+    }
+
+    private byte[] readAsset(String name) throws IOException {
+        try (InputStream in = getAssets().open(name)) {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            return bo.toByteArray();
+        }
     }
 
     private void readClient(Socket s) {
@@ -498,6 +584,9 @@ public class CameraActivity extends Activity {
     }
 
     private void send(final String msg) {
+        if (msg.startsWith("SAVED ")) lastMsg = "Saved on the camera phone: " + msg.substring(6);
+        else if (msg.startsWith("ERR ")) lastMsg = msg.substring(4);
+        else if (msg.equals("STATE RECORDING")) lastMsg = "";
         net.execute(() -> {
             PrintWriter w;
             synchronized (CameraActivity.this) { w = clientOut; }
@@ -515,6 +604,8 @@ public class CameraActivity extends Activity {
         }
         try { if (server != null) server.close(); } catch (IOException ignored) { }
         server = null;
+        try { if (httpServer != null) httpServer.close(); } catch (IOException ignored) { }
+        httpServer = null;
     }
 
     private static void closeQuietly(Socket s) {
@@ -569,7 +660,8 @@ public class CameraActivity extends Activity {
         synchronized (this) { connected = client != null; }
         String where = ip == null ? "(connect to Wi-Fi or a hotspot first)" : ip + ":" + PORT;
         setStatus((connected ? "Remote connected ✔\n" : "Waiting for the remote…\n")
-                + "This phone's address: " + where);
+                + "Android remote address: " + where
+                + (ip == null ? "" : "\n\niPhone / any browser:\nhttp://" + ip + ":" + HTTP_PORT + "/?k=" + pin));
     }
 
     private void setStatus(final String text) {
